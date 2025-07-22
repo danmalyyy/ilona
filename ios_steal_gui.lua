@@ -1,46 +1,50 @@
-local player = game.Players.LocalPlayer
+local player = game.Players.LocalPlayer 
 local RS = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
+local TS = game:GetService("TweenService")
+local DataStoreService = game:GetService("DataStoreService")
+local dataStore = DataStoreService:GetDataStore("StealBrainrotSettings_"..player.UserId)
 
 local char = player.Character or player.CharacterAdded:Wait()
 local hrp = char:WaitForChild("HumanoidRootPart")
 local hum = char:WaitForChild("Humanoid")
 
--- Pozice tvé základny (změň podle potřeby)
+-- Změň na pozici své base!
 local MY_BASE_POSITION = Vector3.new(0, 10, 0)
 
--- Klíčová slova pro brainroty
-local brainrotKeywords = {"tralalero", "tralala", "tripi", "tropi"}
-
--- Stav menu
-local menuVisible = false
+-- Stavy toggle módů
+local states = {
+    speedBoost = false,
+    jumpBoost = false,
+    infJump = false,
+}
 
 -- GUI
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "StealBrainrotGUI"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = player:WaitForChild("PlayerGui")
 
 -- Malý červený kruh (dragovatelný)
 local toggleBtn = Instance.new("TextButton")
-toggleBtn.Name = "ToggleButton"
 toggleBtn.Size = UDim2.new(0, 40, 0, 40)
 toggleBtn.Position = UDim2.new(0, 10, 0, 50)
 toggleBtn.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
 toggleBtn.Text = ""
-toggleBtn.TextTransparency = 1
-toggleBtn.BorderSizePixel = 0
 toggleBtn.AutoButtonColor = false
 toggleBtn.ZIndex = 10
+toggleBtn.Name = "ToggleButton"
+toggleBtn.AnchorPoint = Vector2.new(0,0)
+toggleBtn.TextTransparency = 1
+toggleBtn.BackgroundTransparency = 0.3
+toggleBtn.BorderSizePixel = 0
 toggleBtn.ClipsDescendants = true
-toggleBtn.Selectable = false
-toggleBtn.Draggable = true
 toggleBtn.Modal = true
+toggleBtn.Selectable = false
 toggleBtn.Parent = screenGui
+toggleBtn.Draggable = true
 
 -- Menu frame (skryté)
 local menuFrame = Instance.new("Frame")
-menuFrame.Name = "MenuFrame"
 menuFrame.Size = UDim2.new(0, 180, 0, 350)
 menuFrame.Position = UDim2.new(0, 60, 0, 50)
 menuFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
@@ -50,7 +54,7 @@ menuFrame.ClipsDescendants = true
 menuFrame.ZIndex = 9
 menuFrame.Parent = screenGui
 
--- ScrollFrame uvnitř menu
+-- Scrollframe pro tlačítka
 local scrollFrame = Instance.new("ScrollingFrame")
 scrollFrame.Size = UDim2.new(1, 0, 1, 0)
 scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 500)
@@ -63,13 +67,65 @@ UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 UIListLayout.Padding = UDim.new(0, 5)
 UIListLayout.Parent = scrollFrame
 
--- Funkce hledání brainrotu podle klíčových slov
+-- Uložení a načtení nastavení
+local function saveSettings()
+    local success, err = pcall(function()
+        dataStore:SetAsync("settings", {
+            pos = toggleBtn.Position,
+            states = states,
+        })
+    end)
+    if not success then warn("Save failed: "..err) end
+end
+
+local function loadSettings()
+    local success, data = pcall(function()
+        return dataStore:GetAsync("settings")
+    end)
+    if success and data then
+        if data.pos then toggleBtn.Position = data.pos end
+        if data.states then 
+            states = data.states
+            applyStates()
+        end
+    end
+end
+
+-- Aplikace toggle stavů
+function applyStates()
+    hum.WalkSpeed = states.speedBoost and 100 or 16
+    hum.JumpPower = states.jumpBoost and 100 or 50
+end
+
+-- Infinite jump loop
+RS.Stepped:Connect(function()
+    if states.infJump then
+        hum:ChangeState(Enum.HumanoidStateType.Jumping)
+    end
+end)
+
+-- Teleport forward funkce
+local function tpForward()
+    local lookVector = hrp.CFrame.LookVector
+    local newPos = hrp.Position + (lookVector * 30)
+    -- Udržíme Y pozici
+    hrp.CFrame = CFrame.new(newPos.X, hrp.Position.Y, newPos.Z)
+end
+
+-- Teleport roof
+local function tpRoof()
+    local pos = hrp.Position
+    hrp.CFrame = CFrame.new(pos.X, 150, pos.Z)
+end
+
+-- Najdi nearby brainrot (do 10 studů), hledá i podle částečné shody názvu
 local function findNearbyBrainrot(radius)
+    local brainrotNames = {"tralalero", "tralala", "tripi", "tropi", "brainrot"} -- přidej další podle potřeby
     for _, obj in pairs(workspace:GetChildren()) do
         if obj:IsA("Model") then
             local lowerName = obj.Name:lower()
-            for _, keyword in ipairs(brainrotKeywords) do
-                if string.find(lowerName, keyword) then
+            for _, bName in pairs(brainrotNames) do
+                if string.find(lowerName, bName) then
                     local primaryPart = obj.PrimaryPart or obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChildWhichIsA("BasePart")
                     if primaryPart and (primaryPart.Position - hrp.Position).Magnitude <= radius then
                         return obj
@@ -81,11 +137,12 @@ local function findNearbyBrainrot(radius)
     return nil
 end
 
--- Instant Steal: vezmi brainrot a teleportuj se do základny
+-- Instant Steal: vezmi brainrot a teleportuj se do své base
 local function instantSteal()
     local brainrot = findNearbyBrainrot(10)
     if brainrot then
-        brainrot.Parent = char -- přesuneš brainrot do své postavy
+        -- Přidej brainrot do postavy (nebo kam je potřeba, uprav dle hry)
+        brainrot.Parent = char
         hrp.CFrame = CFrame.new(MY_BASE_POSITION)
         print("Teleportováno s brainrotem do base!")
     else
@@ -93,7 +150,32 @@ local function instantSteal()
     end
 end
 
--- Pomocná funkce pro vytváření tlačítek v menu
+-- Tlačítko vytvoření s toggle funkcí (pro Speed, Jump, Infinite Jump)
+local function createToggleButton(name, stateKey)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -10, 0, 40)
+    btn.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    btn.TextColor3 = Color3.new(1, 1, 1)
+    btn.BorderSizePixel = 2
+    btn.Font = Enum.Font.SourceSansBold
+    btn.TextSize = 18
+    btn.Text = name .. ": OFF"
+    btn.AutoButtonColor = false
+    btn.Parent = scrollFrame
+
+    btn.MouseButton1Click:Connect(function()
+        states[stateKey] = not states[stateKey]
+        btn.Text = name .. (states[stateKey] and ": ON" or ": OFF")
+        applyStates()
+        saveSettings()
+    end)
+
+    -- Inicializace textu podle stavu
+    btn.Text = name .. (states[stateKey] and ": ON" or ": OFF")
+    return btn
+end
+
+-- Tlačítko vytvoření (bez toggle)
 local function createButton(name, onClick)
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.new(1, -10, 0, 40)
@@ -105,15 +187,64 @@ local function createButton(name, onClick)
     btn.Text = name
     btn.AutoButtonColor = false
     btn.Parent = scrollFrame
+
     btn.MouseButton1Click:Connect(onClick)
     return btn
 end
 
--- Přidání tlačítka Instant Steal do menu
+-- Label pro nejlepší brainrot info
+local bestBrainrotLabel = Instance.new("TextLabel")
+bestBrainrotLabel.Size = UDim2.new(1, -10, 0, 30)
+bestBrainrotLabel.BackgroundTransparency = 1
+bestBrainrotLabel.TextColor3 = Color3.new(1, 1, 1)
+bestBrainrotLabel.TextScaled = true
+bestBrainrotLabel.TextXAlignment = Enum.TextXAlignment.Left
+bestBrainrotLabel.Text = "Nejlepší brainrot: N/A"
+bestBrainrotLabel.Parent = scrollFrame
+
+-- Funkce pro získání nejlepšího brainrota podle Speed (přizpůsob dle tvých leaderstats)
+local function getBestBrainrot()
+    local bestPlayer = nil
+    local bestSpeed = 0
+    for _, plr in pairs(game.Players:GetPlayers()) do
+        if plr ~= player then
+            local speedStat = plr:FindFirstChild("leaderstats") and plr.leaderstats:FindFirstChild("Speed")
+            if speedStat and speedStat.Value > bestSpeed then
+                bestSpeed = speedStat.Value
+                bestPlayer = plr
+            end
+        end
+    end
+    return bestPlayer, bestSpeed
+end
+
+-- Aktualizace labelu každých 5 sekund
+coroutine.wrap(function()
+    while true do
+        local plr, speed = getBestBrainrot()
+        if plr then
+            bestBrainrotLabel.Text = string.format("Nejlepší brainrot: %s (%.2f M/sec)", plr.Name, speed)
+        else
+            bestBrainrotLabel.Text = "Nejlepší brainrot: N/A"
+        end
+        wait(5)
+    end
+end)()
+
+-- Přidání tlačítek do menu
+createToggleButton("Speed Boost", "speedBoost")
+createToggleButton("Jump Boost", "jumpBoost")
+createToggleButton("Infinite Jump", "infJump")
+createButton("TP Forward", tpForward)
+createButton("TP Roof", tpRoof)
 createButton("Instant Steal", instantSteal)
 
 -- Toggle menu viditelnosti po kliknutí na malý červený kruh
 toggleBtn.MouseButton1Click:Connect(function()
-    menuVisible = not menuVisible
-    menuFrame.Visible = menuVisible
+    menuFrame.Visible = not menuFrame.Visible
+    saveSettings()
 end)
+
+-- Při startu načti uložená data
+loadSettings()
+applyStates()
