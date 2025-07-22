@@ -1,193 +1,235 @@
 local player = game.Players.LocalPlayer
+local RS = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local TS = game:GetService("TweenService")
+local DataStoreService = game:GetService("DataStoreService")
+local dataStore = DataStoreService:GetDataStore("StealBrainrotSettings_"..player.UserId)
+
 local char = player.Character or player.CharacterAdded:Wait()
 local hrp = char:WaitForChild("HumanoidRootPart")
 local hum = char:WaitForChild("Humanoid")
-local UIS = game:GetService("UserInputService")
-local RS = game:GetService("RunService")
 
-local infJump = false
-local speedBoost = false
-local jumpBoost = false
+-- Změň na pozici své base!
+local MY_BASE_POSITION = Vector3.new(0, 10, 0)
+
+-- Stavy toggle módů
+local states = {
+    speedBoost = false,
+    jumpBoost = false,
+    infJump = false,
+}
 
 -- GUI
-local gui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
-gui.ResetOnSpawn = false
+local screenGui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
+screenGui.ResetOnSpawn = false
 
--- Draggable frame function
-local function makeDraggable(frame)
-    local dragging, dragInput, dragStart, startPos
-    frame.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-            dragStart = input.Position
-            startPos = frame.Position
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                end
-            end)
-        end
-    end)
-    frame.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement then
-            dragInput = input
-        end
-    end)
-    RS.RenderStepped:Connect(function()
-        if dragging and dragInput then
-            local delta = dragInput.Position - dragStart
-            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X,
-                                     startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-        end
-    end)
-end
-
--- Main menu frame
-local menuFrame = Instance.new("Frame", gui)
-menuFrame.Size = UDim2.new(0, 160, 0, 270)
-menuFrame.Position = UDim2.new(0, 100, 0, 100)
-menuFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-menuFrame.BorderSizePixel = 0
-menuFrame.Visible = false
-makeDraggable(menuFrame)
-
--- Toggle button (small red circle)
-local toggleBtn = Instance.new("TextButton", gui)
+-- Malý červený kruh (dragovatelný)
+local toggleBtn = Instance.new("TextButton", screenGui)
 toggleBtn.Size = UDim2.new(0, 40, 0, 40)
-toggleBtn.Position = UDim2.new(0, 10, 0, 10)
+toggleBtn.Position = UDim2.new(0, 10, 0, 50)
 toggleBtn.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
 toggleBtn.Text = ""
-toggleBtn.AutoButtonColor = false -- so it doesn't change color when tapped
-makeDraggable(toggleBtn)
+toggleBtn.AutoButtonColor = false
+toggleBtn.ZIndex = 10
+toggleBtn.Name = "ToggleButton"
+toggleBtn.AnchorPoint = Vector2.new(0,0)
+toggleBtn.TextTransparency = 1
+toggleBtn.BackgroundTransparency = 0.3
+toggleBtn.BorderSizePixel = 0
+toggleBtn.ClipsDescendants = true
+toggleBtn.Modal = true
+toggleBtn.Selectable = false
+toggleBtn.Draggable = true
 
-toggleBtn.MouseButton1Click:Connect(function()
-    menuFrame.Visible = not menuFrame.Visible
-end)
+-- Menu frame (skryté)
+local menuFrame = Instance.new("Frame", screenGui)
+menuFrame.Size = UDim2.new(0, 180, 0, 350)
+menuFrame.Position = UDim2.new(0, 60, 0, 50)
+menuFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+menuFrame.BorderSizePixel = 0
+menuFrame.Visible = false
+menuFrame.ClipsDescendants = true
+menuFrame.ZIndex = 9
 
--- Helper to create toggle buttons inside the menu
-local function createToggleButton(text, y, getFlag, setFlag, onActivate, onDeactivate)
-    local btn = Instance.new("TextButton", menuFrame)
-    btn.Size = UDim2.new(1, -10, 0, 30)
-    btn.Position = UDim2.new(0, 5, 0, y)
-    btn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-    btn.TextColor3 = Color3.new(1, 1, 1)
-    btn.Font = Enum.Font.SourceSansBold
-    btn.TextSize = 16
+-- Scrollframe pro tlačítka
+local scrollFrame = Instance.new("ScrollingFrame", menuFrame)
+scrollFrame.Size = UDim2.new(1, 0, 1, 0)
+scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 500)
+scrollFrame.ScrollBarThickness = 8
+scrollFrame.BackgroundTransparency = 1
 
-    local function updateText()
-        if getFlag() then
-            btn.Text = text .. " [ON]"
-            btn.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
-        else
-            btn.Text = text .. " [OFF]"
-            btn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-        end
-    end
+local UIListLayout = Instance.new("UIListLayout", scrollFrame)
+UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+UIListLayout.Padding = UDim.new(0, 5)
 
-    btn.MouseButton1Click:Connect(function()
-        local newVal = not getFlag()
-        setFlag(newVal)
-        if newVal then
-            if onActivate then pcall(onActivate) end
-        else
-            if onDeactivate then pcall(onDeactivate) end
-        end
-        updateText()
+-- Uložení a načtení nastavení
+local function saveSettings()
+    local success, err = pcall(function()
+        dataStore:SetAsync("settings", {
+            pos = toggleBtn.Position,
+            states = states,
+        })
     end)
-
-    updateText()
+    if not success then warn("Save failed: "..err) end
 end
 
--- TP Forward (teleport 30 studs forward)
+local function loadSettings()
+    local success, data = pcall(function()
+        return dataStore:GetAsync("settings")
+    end)
+    if success and data then
+        if data.pos then toggleBtn.Position = data.pos end
+        if data.states then 
+            states = data.states
+            applyStates()
+        end
+    end
+end
+
+-- Aplikace toggle stavů
+function applyStates()
+    hum.WalkSpeed = states.speedBoost and 100 or 16
+    hum.JumpPower = states.jumpBoost and 100 or 50
+end
+
+-- Infinite jump loop
+RS.Stepped:Connect(function()
+    if states.infJump then
+        hum:ChangeState(Enum.HumanoidStateType.Jumping)
+    end
+end)
+
+-- Teleport forward funkce
 local function tpForward()
     local lookVector = hrp.CFrame.LookVector
     local newPos = hrp.Position + (lookVector * 30)
-    hrp.CFrame = CFrame.new(newPos)
+    -- Udržíme Y pozici
+    hrp.CFrame = CFrame.new(newPos.X, hrp.Position.Y, newPos.Z)
 end
 
--- TP Roof (teleport to 150 height above current X,Z)
+-- Teleport roof
 local function tpRoof()
     local pos = hrp.Position
     hrp.CFrame = CFrame.new(pos.X, 150, pos.Z)
 end
 
--- Speed Boost on/off
-local function enableSpeedBoost()
-    hum.WalkSpeed = 100
-end
-local function disableSpeedBoost()
-    hum.WalkSpeed = 16 -- default speed
-end
-
--- Jump Boost on/off
-local function enableJumpBoost()
-    hum.JumpPower = 100
-end
-local function disableJumpBoost()
-    hum.JumpPower = 50 -- default jump power
+-- Najdi nearby brainrot (do 10 studů)
+local function findNearbyBrainrot(radius)
+    for _, obj in pairs(workspace:GetChildren()) do
+        if obj:IsA("Model") and string.find(obj.Name:lower(), "brainrot") then
+            local primaryPart = obj.PrimaryPart or obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChildWhichIsA("BasePart")
+            if primaryPart and (primaryPart.Position - hrp.Position).Magnitude <= radius then
+                return obj
+            end
+        end
+    end
+    return nil
 end
 
--- Infinite jump toggle handled in stepped
-local function toggleInfJump(active)
-    infJump = active
-end
-
--- Instant Steal teleport (example coordinates, uprav podle hry)
+-- Instant Steal: vezmi brainrot a teleportuj se do své base
 local function instantSteal()
-    -- Pokus o aktivaci steal buttonu v UI hry
-    local stealBtn = player.PlayerGui:FindFirstChild("Steal")
-    if stealBtn and stealBtn:IsA("TextButton") then
-        pcall(function() stealBtn:Activate() end)
+    local brainrot = findNearbyBrainrot(10)
+    if brainrot then
+        -- Přidej brainrot do postavy (nebo kam je potřeba, uprav dle hry)
+        brainrot.Parent = char
+        hrp.CFrame = CFrame.new(MY_BASE_POSITION)
+        print("Teleportováno s brainrotem do base!")
+    else
+        print("Brainrot nenalezen v okolí.")
     end
-    -- Teleport do boji base, nastav podle hry přesné souřadnice
-    local BOJI_BASE = Vector3.new(-150, 20, 240)
-    hrp.CFrame = CFrame.new(BOJI_BASE)
 end
 
--- Vytvoření tlačítek menu
+-- Tlačítko vytvoření s toggle funkcí (pro Speed, Jump, Infinite Jump)
+local function createToggleButton(name, stateKey)
+    local btn = Instance.new("TextButton", scrollFrame)
+    btn.Size = UDim2.new(1, -10, 0, 40)
+    btn.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    btn.TextColor3 = Color3.new(1, 1, 1)
+    btn.BorderSizePixel = 2
+    btn.Font = Enum.Font.SourceSansBold
+    btn.TextSize = 18
+    btn.Text = name .. ": OFF"
+    btn.AutoButtonColor = false
 
--- TP Forward je tlačítko, které jednoduše teleportuje ihned, nemá stav zapnuto/vypnuto
-local tpForwardBtn = Instance.new("TextButton", menuFrame)
-tpForwardBtn.Size = UDim2.new(1, -10, 0, 30)
-tpForwardBtn.Position = UDim2.new(0, 5, 0, 5)
-tpForwardBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-tpForwardBtn.TextColor3 = Color3.new(1,1,1)
-tpForwardBtn.Font = Enum.Font.SourceSansBold
-tpForwardBtn.TextSize = 16
-tpForwardBtn.Text = "TP Forward"
-tpForwardBtn.MouseButton1Click:Connect(tpForward)
+    btn.MouseButton1Click:Connect(function()
+        states[stateKey] = not states[stateKey]
+        btn.Text = name .. (states[stateKey] and ": ON" or ": OFF")
+        applyStates()
+        saveSettings()
+    end)
 
--- Ostatní tlačítka s přepínačem
+    -- Inicializace textu podle stavu
+    btn.Text = name .. (states[stateKey] and ": ON" or ": OFF")
+    return btn
+end
 
-createToggleButton("Speed Boost", 45, 
-    function() return speedBoost end,
-    function(v) speedBoost = v end,
-    enableSpeedBoost,
-    disableSpeedBoost
-)
+-- Tlačítko vytvoření (bez toggle)
+local function createButton(name, onClick)
+    local btn = Instance.new("TextButton", scrollFrame)
+    btn.Size = UDim2.new(1, -10, 0, 40)
+    btn.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    btn.TextColor3 = Color3.new(1, 1, 1)
+    btn.BorderSizePixel = 2
+    btn.Font = Enum.Font.SourceSansBold
+    btn.TextSize = 18
+    btn.Text = name
+    btn.AutoButtonColor = false
+    btn.MouseButton1Click:Connect(onClick)
+    return btn
+end
 
-createToggleButton("Jump Boost", 85, 
-    function() return jumpBoost end,
-    function(v) jumpBoost = v end,
-    enableJumpBoost,
-    disableJumpBoost
-)
+-- Label pro nejlepší brainrot info
+local bestBrainrotLabel = Instance.new("TextLabel", scrollFrame)
+bestBrainrotLabel.Size = UDim2.new(1, -10, 0, 30)
+bestBrainrotLabel.BackgroundTransparency = 1
+bestBrainrotLabel.TextColor3 = Color3.new(1, 1, 1)
+bestBrainrotLabel.TextScaled = true
+bestBrainrotLabel.TextXAlignment = Enum.TextXAlignment.Left
+bestBrainrotLabel.Text = "Nejlepší brainrot: N/A"
 
-createToggleButton("Infinite Jump", 125, 
-    function() return infJump end,
-    function(v) toggleInfJump(v) end
-)
-
-createToggleButton("Instant Steal", 165, 
-    function() return false end,
-    function()
-        instantSteal()
+-- Funkce pro získání nejlepšího brainrota podle Speed (přizpůsob dle tvých leaderstats)
+local function getBestBrainrot()
+    local bestPlayer = nil
+    local bestSpeed = 0
+    for _, plr in pairs(game.Players:GetPlayers()) do
+        if plr ~= player then
+            local speedStat = plr:FindFirstChild("leaderstats") and plr.leaderstats:FindFirstChild("Speed")
+            if speedStat and speedStat.Value > bestSpeed then
+                bestSpeed = speedStat.Value
+                bestPlayer = plr
+            end
+        end
     end
-)
+    return bestPlayer, bestSpeed
+end
 
--- Infinite jump loop
-RS.Stepped:Connect(function()
-    if infJump then
-        hum:ChangeState(Enum.HumanoidStateType.Jumping)
+-- Aktualizace labelu každých 5 sekund
+coroutine.wrap(function()
+    while true do
+        local plr, speed = getBestBrainrot()
+        if plr then
+            bestBrainrotLabel.Text = string.format("Nejlepší brainrot: %s (%.2f M/sec)", plr.Name, speed)
+        else
+            bestBrainrotLabel.Text = "Nejlepší brainrot: N/A"
+        end
+        wait(5)
     end
+end)()
+
+-- Přidání tlačítek do menu
+createToggleButton("Speed Boost", "speedBoost")
+createToggleButton("Jump Boost", "jumpBoost")
+createToggleButton("Infinite Jump", "infJump")
+createButton("TP Forward", tpForward)
+createButton("TP Roof", tpRoof)
+createButton("Instant Steal", instantSteal)
+
+-- Toggle menu viditelnosti po kliknutí na malý červený kruh
+toggleBtn.MouseButton1Click:Connect(function()
+    menuFrame.Visible = not menuFrame.Visible
+    saveSettings()
 end)
+
+-- Při startu načti uložená data
+loadSettings()
+applyStates()
